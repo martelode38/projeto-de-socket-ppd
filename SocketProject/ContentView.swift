@@ -16,6 +16,9 @@ struct ContentView: View {
             Text("Hello, world!")
         }
         .padding()
+        .onAppear {
+            TCPServer(port: 8080).start()
+        }
     }
 }
 
