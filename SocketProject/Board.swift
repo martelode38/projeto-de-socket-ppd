@@ -88,7 +88,8 @@ struct Board {
                     pieces[position] = Piece(owner: .white, position: position)
                 case 2:
                     if column != 4 {
-                        let owner: PieceOwner = column.isMultiple(of: 2) ? .white : .black
+                        let isRightSide = column > 4
+                        let owner: PieceOwner = column.isMultiple(of: 2) == isRightSide ? .black : .white
                         pieces[position] = Piece(owner: owner, position: position)
                     }
                 case 3, 4:

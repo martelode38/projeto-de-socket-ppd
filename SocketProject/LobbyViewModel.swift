@@ -5,7 +5,7 @@ import UIKit
 @MainActor
 final class LobbyViewModel: ObservableObject {
     @Published var playerName: String = UIDevice.current.name
-    @Published var host: String = "10.45.49.92"
+    @Published var host: String = "192.168.1.39"
     @Published var portText: String = "8080"
     @Published var message: String = "Olá servidor!"
     @Published var chatMessages: [ChatMessage] = []
