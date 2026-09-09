@@ -1,18 +1,11 @@
-//
-//  TCPClient.swift
-//  SocketProject
-//
-//  Created by Martenier Santos on 22/08/26.
-//
-
 import Foundation
 import Network
 
 final class TCPClient {
-    var connection: NWConnection?
     var onStateChange: ((String) -> Void)?
     var onMessageReceived: ((NetworkMessage) -> Void)?
 
+    private var connection: NWConnection?
     private let queue = DispatchQueue(label: "TCPClientQueue")
     private let host: NWEndpoint.Host
     private let port: NWEndpoint.Port
@@ -62,10 +55,6 @@ final class TCPClient {
         connection.start(queue: queue)
     }
 
-    func send(_ message: String) {
-        send(NetworkMessage(type: .message, text: message))
-    }
-
     func send(_ message: NetworkMessage) {
         queue.async { [weak self] in
             self?.send(message, completion: nil)
@@ -82,8 +71,7 @@ final class TCPClient {
     }
 
     func disconnect() {
-        queue.async { [weak self] in
-            guard let self else { return }
+        queue.async {
             guard self.connection != nil else {
                 self.cleanupConnection()
                 return
@@ -123,18 +111,8 @@ final class TCPClient {
     }
 
     private func processBufferedMessages() {
-        while let newlineRange = receiveBuffer.firstRange(of: Data([0x0A])) {
-            let messageData = receiveBuffer.subdata(in: 0..<newlineRange.lowerBound)
-            receiveBuffer.removeSubrange(0..<newlineRange.upperBound)
-
-            guard let message = MessageParser.decode(messageData) else {
-                if let text = String(data: messageData, encoding: .utf8), !text.isEmpty {
-                    print("Recebido do servidor (não decodificado): \(text)")
-                }
-                continue
-            }
-
-            self.onMessageReceived?(message)
+        for message in MessageParser.decodeMessages(from: &receiveBuffer) {
+            onMessageReceived?(message)
             print("Recebido do servidor: \(MessageParser.summary(for: message))")
         }
     }

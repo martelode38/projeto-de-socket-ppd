@@ -1,10 +1,3 @@
-//
-//  LobbyView.swift
-//  SocketProject
-//
-//  Created by OpenAI.
-//
-
 import SwiftUI
 
 struct LobbyView: View {
@@ -18,135 +11,68 @@ struct LobbyView: View {
                 lobbyContent
             }
         }
-        .onAppear {
-            if viewModel.logs.isEmpty {
-                viewModel.logs.append("Lobby pronto")
-            }
-        }
     }
 
     private var lobbyContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Lobby")
                     .font(.title)
 
                 Text(viewModel.matchStatusText)
-                Text(viewModel.matchStatusDetail)
+                Text("Papel: \(viewModel.roleText)")
+                    .foregroundStyle(.secondary)
+            }
 
-//                VStack(alignment: .leading, spacing: 8) {
-//                    Text("HOST")
-//                        .font(.headline)
-//                    Text("Estado: \(viewModel.serverStatus)")
-//                    Text("Jogador: \(viewModel.connectedPlayerName)")
-//                    Text("Pronto: \(viewModel.hostReady ? "Sim" : "Não")")
-//                    Text("Porta: \(viewModel.portText)")
-//                }
-//
-//                VStack(alignment: .leading, spacing: 8) {
-//                    Text("CLIENTE")
-//                        .font(.headline)
-//                    Text("Estado: \(viewModel.clientStatus)")
-//                    Text("Player local: \(viewModel.playerName)")
-//                    Text("Pronto: \(viewModel.clientReady ? "Sim" : "Não")")
-//                    Text("Host: \(viewModel.host)")
-//                }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Conexão")
+                    .font(.headline)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Identidade e conexão")
-                        .font(.headline)
+                Button(viewModel.serverButtonTitle) {
+                    viewModel.toggleServer()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(viewModel.isServerButtonDisabled)
 
-                    TextField("Jogador", text: $viewModel.playerName)
+                if !viewModel.isServerRunning {
+                    TextField("Endereço do servidor", text: $viewModel.host)
                         .textFieldStyle(.roundedBorder)
 
-                    TextField("Host", text: $viewModel.host)
-                        .textFieldStyle(.roundedBorder)
-
-                    TextField("Porta", text: $viewModel.portText)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Servidor")
-                        .font(.headline)
-
-                    HStack {
-                        Button("Start Server") {
-                            viewModel.startServer()
-                        }
-                        .disabled(viewModel.isStartingServer || viewModel.isServerRunning)
-
-                        Button("Stop Server") {
-                            viewModel.stopServer()
-                        }
-                        .disabled(viewModel.isStoppingServer || !viewModel.isServerRunning)
+                    Button(viewModel.clientButtonTitle) {
+                        viewModel.toggleClient()
                     }
-                }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Cliente")
-                        .font(.headline)
-
-                    HStack {
-                        Button("Connect Client") {
-                            viewModel.connectClient()
-                        }
-                        .disabled(viewModel.isConnectingClient || viewModel.isServerRunning || viewModel.host.isEmpty)
-
-                        Button("Disconnect Client") {
-                            viewModel.disconnectClient()
-                        }
-                        .disabled(!viewModel.isClientConnected)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Partida")
-                        .font(.headline)
-
-                    HStack {
-                        Button("Ready as Host") {
-                            viewModel.readyAsHost()
-                        }
-                        .disabled(!viewModel.isServerRunning || viewModel.hostReady)
-
-                        Button("Ready as Client") {
-                            viewModel.readyAsClient()
-                        }
-                        .disabled(!viewModel.isClientConnected || viewModel.clientReady)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Chat")
-                        .font(.headline)
-
-                    TextField("Mensagem", text: $viewModel.message)
-                        .textFieldStyle(.roundedBorder)
-
-                    HStack {
-                        Button("Enviar como cliente") {
-                            viewModel.sendAsClient()
-                        }
-                        .disabled(viewModel.isSendingMessage || !viewModel.isClientConnected || viewModel.message.isEmpty)
-
-                        Button("Enviar como host") {
-                            viewModel.sendAsServer()
-                        }
-                        .disabled(!viewModel.isServerRunning || viewModel.message.isEmpty)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Log")
-                        .font(.headline)
-
-                    ForEach(viewModel.logs.indices, id: \.self) { index in
-                        Text(viewModel.logs[index])
-                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(viewModel.isClientButtonDisabled)
                 }
             }
-            .padding()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Partida")
+                    .font(.headline)
+
+                Text(viewModel.matchStatusDetail)
+                    .foregroundStyle(.secondary)
+
+                Button(viewModel.readyButtonTitle) {
+                    viewModel.markReady()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(viewModel.isReadyButtonDisabled)
+            }
+
+            ChatView(
+                messages: viewModel.chatMessages,
+                text: $viewModel.message,
+                canSend: viewModel.canSendChatMessage,
+                onSend: viewModel.sendChatMessage
+            )
+
+            Spacer(minLength: 0)
         }
+        .padding()
     }
 }

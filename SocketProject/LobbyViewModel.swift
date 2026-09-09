@@ -1,10 +1,3 @@
-//
-//  LobbyViewModel.swift
-//  SocketProject
-//
-//  Created by OpenAI.
-//
-
 import Foundation
 internal import Combine
 import UIKit
@@ -15,6 +8,7 @@ final class LobbyViewModel: ObservableObject {
     @Published var host: String = "10.45.49.92"
     @Published var portText: String = "8080"
     @Published var message: String = "Olá servidor!"
+    @Published var chatMessages: [ChatMessage] = []
     @Published var logs: [String] = []
     @Published var serverStatus: String = "Servidor parado"
     @Published var clientStatus: String = "Desconectado"
@@ -33,6 +27,7 @@ final class LobbyViewModel: ObservableObject {
     @Published var selectedPosition: BoardPosition?
     @Published var boardStatus: String = "Selecione uma peça"
     @Published var currentTurn: PieceOwner = .white
+    @Published var winnerText: String = ""
 
     private let repository = LobbyRepository()
 
@@ -100,6 +95,14 @@ final class LobbyViewModel: ObservableObject {
         isStoppingServer = false
     }
 
+    func toggleServer() {
+        if isServerRunning {
+            stopServer()
+        } else {
+            startServer()
+        }
+    }
+
     func connectClient() {
         guard let port = UInt16(portText) else {
             appendLog("Porta inválida")
@@ -116,8 +119,6 @@ final class LobbyViewModel: ObservableObject {
         resetMatchState()
         isShowingGameScreen = false
 
-        let trimmedPlayerName = playerName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedPlayerName = trimmedPlayerName.isEmpty ? UIDevice.current.name : trimmedPlayerName
         repository.connectClient(host: host, port: port, player: Player(name: resolvedPlayerName))
         clientStatus = "Conectando..."
         isClientConnected = false
@@ -136,22 +137,26 @@ final class LobbyViewModel: ObservableObject {
         appendLog("Cliente desconectado")
     }
 
-    func sendAsClient() {
-        guard !message.isEmpty else { return }
-        isSendingMessage = true
-        dismissKeyboard()
-        let text = message
-        repository.sendFromClient(NetworkMessage(type: .message, text: text))
-        appendLog("Cliente enviou: \(text)")
-        isSendingMessage = false
+    func toggleClient() {
+        if isClientConnected {
+            disconnectClient()
+        } else {
+            connectClient()
+        }
     }
 
-    func sendAsServer() {
-        guard !message.isEmpty else { return }
+    func sendChatMessage() {
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        isSendingMessage = true
         dismissKeyboard()
-        let text = message
-        repository.sendFromServer(NetworkMessage(type: .message, text: text))
-        appendLog("Servidor enviou: \(text)")
+        sendToPeer(NetworkMessage(type: .message, text: text))
+        chatMessages.append(ChatMessage(text: text, isMine: true))
+        message = ""
+        let sender = isServerRunning ? "Servidor" : "Cliente"
+        appendLog("\(sender) enviou: \(text)")
+        isSendingMessage = false
     }
 
     func readyAsHost() {
@@ -165,7 +170,7 @@ final class LobbyViewModel: ObservableObject {
         isShowingGameScreen = true
         gameState = .playing
         let hostPlayer = Player(name: "HOST")
-        repository.sendFromServer(NetworkMessage(type: .playerReady, player: hostPlayer, gameState: .waiting))
+        sendToPeer(NetworkMessage(type: .playerReady, player: hostPlayer, gameState: .waiting))
         appendLog("HOST ficou pronto")
         attemptStartGame()
     }
@@ -180,28 +185,43 @@ final class LobbyViewModel: ObservableObject {
         clientReady = true
         isShowingGameScreen = true
         gameState = .playing
-        let trimmedPlayerName = playerName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedPlayerName = trimmedPlayerName.isEmpty ? UIDevice.current.name : trimmedPlayerName
-        repository.sendFromClient(NetworkMessage(type: .playerReady, player: Player(name: resolvedPlayerName), gameState: .waiting))
+        sendToPeer(NetworkMessage(type: .playerReady, player: Player(name: resolvedPlayerName), gameState: .waiting))
         appendLog("CLIENTE ficou pronto")
     }
 
-    func startGame() {
-        attemptStartGame()
+    func markReady() {
+        if isServerRunning {
+            readyAsHost()
+        } else {
+            readyAsClient()
+        }
     }
 
     func disconnectFromGame() {
-        if isClientConnected {
-            disconnectClient()
-        } else if isServerRunning {
+        if isServerRunning {
             stopServer()
+        } else if isClientConnected {
+            disconnectClient()
         } else {
             resetLobbyState()
         }
     }
 
+    func resignMatch() {
+        guard isShowingGameScreen else { return }
+
+        let winner = localPieceOwner.opponent
+        sendGameOver(winner: winner, reason: .resignation)
+        finishMatch(winner: winner, reason: .resignation)
+        appendLog("Você desistiu")
+    }
+
     func handleBoardTap(_ position: BoardPosition) {
         guard isShowingGameScreen else { return }
+        guard isLocalPlayersTurn else {
+            boardStatus = "Aguarde sua vez"
+            return
+        }
 
         if let selectedPosition {
             if selectedPosition == position {
@@ -211,7 +231,7 @@ final class LobbyViewModel: ObservableObject {
             }
 
             if board.isEmpty(at: position) {
-                performLocalMove(from: selectedPosition, to: position, sendMessage: true)
+                performLocalMove(from: selectedPosition, to: position)
             } else if let piece = board.piece(at: position), piece.owner == localPieceOwner {
                 self.selectedPosition = position
                 boardStatus = "Outra peça selecionada"
@@ -260,7 +280,7 @@ final class LobbyViewModel: ObservableObject {
         case .playing:
             return "Tela de jogo aberta"
         case .finished:
-            return "Partida encerrada"
+            return winnerText.isEmpty ? "Partida encerrada" : winnerText
         }
     }
 
@@ -271,8 +291,66 @@ final class LobbyViewModel: ObservableObject {
         case .playing:
             return "Você já está na tela do jogo."
         case .finished:
-            return "Você pode reiniciar o servidor ou reconectar o cliente."
+            return boardStatus
         }
+    }
+
+    var roleText: String {
+        if isServerRunning {
+            return "Servidor"
+        }
+
+        if isClientConnected || isConnectingClient {
+            return "Cliente"
+        }
+
+        return "Escolha uma função"
+    }
+
+    var serverButtonTitle: String {
+        isServerRunning ? "Parar servidor" : "Iniciar servidor"
+    }
+
+    var clientButtonTitle: String {
+        isClientConnected ? "Desconectar" : "Conectar"
+    }
+
+    var readyButtonTitle: String {
+        if isServerRunning && hostReady {
+            return "Servidor pronto"
+        }
+
+        if isClientConnected && clientReady {
+            return "Cliente pronto"
+        }
+
+        return "Estou pronto"
+    }
+
+    var isServerButtonDisabled: Bool {
+        isStartingServer || isStoppingServer || (isClientConnected && !isServerRunning)
+    }
+
+    var isClientButtonDisabled: Bool {
+        isConnectingClient || isServerRunning || (!isClientConnected && host.isEmpty)
+    }
+
+    var isReadyButtonDisabled: Bool {
+        if isServerRunning {
+            return hostReady
+        }
+
+        if isClientConnected {
+            return clientReady
+        }
+
+        return true
+    }
+
+    var canSendChatMessage: Bool {
+        !isSendingMessage
+            && (isServerRunning || isClientConnected)
+            && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func handleServerMessage(_ message: NetworkMessage) {
@@ -281,6 +359,7 @@ final class LobbyViewModel: ObservableObject {
             let name = message.player?.name ?? "Jogador"
             connectedPlayerName = name
             serverStatus = "Cliente conectado"
+            isClientConnected = true
             appendLog("HOST recebeu playerJoined de \(name)")
         case .playerReady:
             clientReady = true
@@ -290,19 +369,23 @@ final class LobbyViewModel: ObservableObject {
             gameState = .playing
             appendLog("HOST recebeu startGame")
         case .move:
-            applyRemoteMove(origin: message.origin, destination: message.destination)
+            applyRemoteMove(message)
         case .message:
+            appendChatFromPeer(message.text)
             appendLog("HOST recebeu: \(message.text ?? "")")
         case .disconnect:
             let name = message.player?.name ?? "Jogador"
             connectedPlayerName = "Nenhum jogador"
             serverStatus = "Aguardando conexão"
+            isClientConnected = false
             if isShowingGameScreen {
-                finishMatch()
+                finishMatch(winner: .white, reason: .disconnect)
             } else {
                 resetLobbyState()
             }
             appendLog("HOST recebeu disconnect de \(name)")
+        case .gameOver:
+            applyGameOver(message)
         }
     }
 
@@ -317,16 +400,21 @@ final class LobbyViewModel: ObservableObject {
             gameState = .playing
             appendLog("CLIENTE recebeu startGame")
         case .move:
-            applyRemoteMove(origin: message.origin, destination: message.destination)
+            applyRemoteMove(message)
         case .message:
+            appendChatFromPeer(message.text)
             appendLog("CLIENTE recebeu: \(message.text ?? "")")
         case .disconnect:
             appendLog("CLIENTE recebeu disconnect")
+            clientStatus = "Desconectado"
+            isClientConnected = false
             if isShowingGameScreen {
-                finishMatch()
+                finishMatch(winner: .black, reason: .disconnect)
             } else {
                 resetLobbyState()
             }
+        case .gameOver:
+            applyGameOver(message)
         }
     }
 
@@ -335,7 +423,7 @@ final class LobbyViewModel: ObservableObject {
         guard gameState != .playing else { return }
 
         gameState = .playing
-        repository.sendFromServer(NetworkMessage(type: .startGame, gameState: .playing))
+        sendToPeer(NetworkMessage(type: .startGame, gameState: .playing))
         appendLog("HOST enviou startGame")
     }
 
@@ -354,15 +442,24 @@ final class LobbyViewModel: ObservableObject {
         selectedPosition = nil
         boardStatus = "Selecione uma peça"
         currentTurn = .white
+        winnerText = ""
+        chatMessages.removeAll()
         board = Board.initial()
     }
 
-    private func finishMatch() {
+    private func finishMatch(winner: PieceOwner? = nil, reason: GameOverReason? = nil) {
         gameState = .finished
         hostReady = false
         clientReady = false
         isShowingGameScreen = false
         selectedPosition = nil
+        if let winner {
+            winnerText = "Vencedor: \(displayName(for: winner))"
+            boardStatus = "\(winnerText) - \(reason?.title ?? "Fim de jogo")"
+        } else {
+            winnerText = ""
+            boardStatus = "Partida encerrada"
+        }
     }
 
     private var localPieceOwner: PieceOwner {
@@ -380,21 +477,175 @@ final class LobbyViewModel: ObservableObject {
         boardStatus = isLocalPlayersTurn ? "Sua vez" : "Aguardando oponente"
     }
 
-    private func performLocalMove(from origin: BoardPosition, to destination: BoardPosition, sendMessage: Bool) {
+    private func performLocalMove(from origin: BoardPosition, to destination: BoardPosition) {
+        guard board.isValidStep(from: origin, to: destination) else {
+            boardStatus = "Movimento inválido"
+            return
+        }
+
         guard board.isEmpty(at: destination) else {
             boardStatus = "Destino ocupado"
             return
         }
 
+        let capture = board.resolvedCapture(from: origin, to: destination)
+        let capturedPositions = capture.positions
+
         board.movePiece(from: origin, to: destination)
+        board.removePieces(at: capturedPositions)
         selectedPosition = nil
+
+        if let winner = board.winner {
+            sendMove(
+                origin: origin,
+                destination: destination,
+                captureKind: capture.kind,
+                capturedPositions: capturedPositions
+            )
+            sendGameOver(winner: winner, reason: .noPieces)
+            finishMatch(winner: winner, reason: .noPieces)
+            appendMoveLog(origin: origin, destination: destination, captureKind: capture.kind, capturedPositions: capturedPositions)
+            return
+        }
+
+        currentTurn = currentTurn == .white ? .black : .white
+        boardStatus = statusTextAfterMove(capturedCount: capturedPositions.count)
+        appendMoveLog(origin: origin, destination: destination, captureKind: capture.kind, capturedPositions: capturedPositions)
+
+        sendMove(
+            origin: origin,
+            destination: destination,
+            captureKind: capture.kind,
+            capturedPositions: capturedPositions
+        )
+    }
+
+    private func sendMove(
+        origin: BoardPosition,
+        destination: BoardPosition,
+        captureKind: CaptureKind?,
+        capturedPositions: [BoardPosition]
+    ) {
+        let message = NetworkMessage(
+            type: .move,
+            origin: origin,
+            destination: destination,
+            captureKind: captureKind,
+            capturedPositions: capturedPositions,
+            boardPieces: Array(board.pieces.values)
+        )
+        sendToPeer(message)
+    }
+
+    private func applyRemoteMove(_ message: NetworkMessage) {
+        let capturedPositions = message.capturedPositions
+        guard let origin = message.origin, let destination = message.destination else {
+            appendLog("Move inválido recebido")
+            return
+        }
+
+        guard board.contains(origin), board.contains(destination) else {
+            appendLog("Move inválido recebido")
+            return
+        }
+
+        if let boardPieces = message.boardPieces {
+            applyBoardSnapshot(boardPieces)
+        } else {
+            guard board.isValidStep(from: origin, to: destination),
+                  board.piece(at: origin) != nil,
+                  board.isEmpty(at: destination) else {
+                appendLog("Move inválido recebido")
+                return
+            }
+
+            board.movePiece(from: origin, to: destination)
+            board.removePieces(at: capturedPositions)
+        }
+        selectedPosition = nil
+
+        if let winner = message.winner ?? board.winner {
+            finishMatch(winner: winner, reason: message.gameOverReason ?? .noPieces)
+            appendLog("Fim de jogo recebido")
+            return
+        }
+
         currentTurn = currentTurn == .white ? .black : .white
         boardStatus = isLocalPlayersTurn ? "Sua vez" : "Aguardando oponente"
+        appendLog("Movimento recebido: \(origin.row),\(origin.column) -> \(destination.row),\(destination.column)")
+        if !capturedPositions.isEmpty {
+            let captureKind = message.captureKind?.title.lowercased() ?? "captura"
+            appendLog("Captura recebida por \(captureKind): \(capturedPositions.count)")
+        }
+    }
+
+    private func statusTextAfterMove(capturedCount: Int) -> String {
+        if capturedCount > 0 {
+            return "Captura realizada. \(isLocalPlayersTurn ? "Sua vez" : "Aguardando oponente")"
+        }
+
+        return isLocalPlayersTurn ? "Sua vez" : "Aguardando oponente"
+    }
+
+    private func applyBoardSnapshot(_ pieces: [Piece]) {
+        var updatedPieces: [BoardPosition: Piece] = [:]
+        for piece in pieces {
+            updatedPieces[piece.position] = piece
+        }
+        board = Board(positions: board.positions, pieces: updatedPieces)
+    }
+
+    private func appendMoveLog(
+        origin: BoardPosition,
+        destination: BoardPosition,
+        captureKind: CaptureKind?,
+        capturedPositions: [BoardPosition]
+    ) {
         appendLog("Movimento local: \(origin.row),\(origin.column) -> \(destination.row),\(destination.column)")
+        if !capturedPositions.isEmpty {
+            let captureName = captureKind?.title.lowercased() ?? "captura"
+            appendLog("Captura por \(captureName): \(capturedPositions.count)")
+        }
+    }
 
-        guard sendMessage else { return }
+    private func sendGameOver(winner: PieceOwner, reason: GameOverReason) {
+        let message = NetworkMessage(
+            type: .gameOver,
+            gameState: .finished,
+            boardPieces: Array(board.pieces.values),
+            winner: winner,
+            gameOverReason: reason
+        )
 
-        let message = NetworkMessage(type: .move, origin: origin, destination: destination)
+        sendToPeer(message)
+    }
+
+    private func applyGameOver(_ message: NetworkMessage) {
+        if let boardPieces = message.boardPieces {
+            applyBoardSnapshot(boardPieces)
+        }
+
+        let winner = message.winner
+        let reason = message.gameOverReason ?? .noPieces
+        finishMatch(winner: winner, reason: reason)
+        appendLog("Game over recebido: \(reason.title)")
+    }
+
+    private func displayName(for owner: PieceOwner) -> String {
+        switch owner {
+        case .white:
+            return "Brancas"
+        case .black:
+            return "Pretas"
+        }
+    }
+
+    private var resolvedPlayerName: String {
+        let trimmedName = playerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedName.isEmpty ? UIDevice.current.name : trimmedName
+    }
+
+    private func sendToPeer(_ message: NetworkMessage) {
         if isServerRunning {
             repository.sendFromServer(message)
         } else {
@@ -402,29 +653,16 @@ final class LobbyViewModel: ObservableObject {
         }
     }
 
-    private func applyRemoteMove(origin: BoardPosition?, destination: BoardPosition?) {
-        guard let origin, let destination else {
-            appendLog("Move inválido recebido")
-            return
-        }
-
-        guard board.piece(at: origin) != nil, board.isEmpty(at: destination) else {
-            appendLog("Move inválido recebido")
-            return
-        }
-
-        board.movePiece(from: origin, to: destination)
-        selectedPosition = nil
-        currentTurn = currentTurn == .white ? .black : .white
-        boardStatus = isLocalPlayersTurn ? "Sua vez" : "Aguardando oponente"
-        appendLog("Movimento recebido: \(origin.row),\(origin.column) -> \(destination.row),\(destination.column)")
-    }
-
     private func appendLog(_ text: String) {
         logs.append(text)
         if logs.count > 60 {
             logs.removeFirst(logs.count - 60)
         }
+    }
+
+    private func appendChatFromPeer(_ text: String?) {
+        guard let text, !text.isEmpty else { return }
+        chatMessages.append(ChatMessage(text: text, isMine: false))
     }
 
     private func dismissKeyboard() {

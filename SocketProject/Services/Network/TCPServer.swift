@@ -1,10 +1,3 @@
-//
-//  TCPServer.swift
-//  SocketProject
-//
-//  Created by Martenier Santos on 22/08/26.
-//
-
 import Foundation
 import Network
 
@@ -13,7 +6,6 @@ final class TCPServer {
     private var connection: NWConnection?
     private var receiveBuffer = Data()
     private var isReceiving = false
-    private var connectedPlayer: Player?
     var onStateChange: ((String) -> Void)?
     var onMessageReceived: ((NetworkMessage) -> Void)?
 
@@ -65,19 +57,16 @@ final class TCPServer {
     }
 
     func stop() {
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.isReceiving = false
-            self.receiveBuffer.removeAll(keepingCapacity: false)
-            self.connection?.cancel()
-            self.connection = nil
-            self.listener?.cancel()
-            self.listener = nil
-        }
-    }
+        queue.async {
+            guard self.connection != nil else {
+                self.close()
+                return
+            }
 
-    func send(_ message: String) {
-        send(NetworkMessage(type: .message, text: message))
+            self.send(NetworkMessage(type: .disconnect, player: Player(name: "HOST"))) { [weak self] in
+                self?.close()
+            }
+        }
     }
 
     func send(_ message: NetworkMessage) {
@@ -105,7 +94,6 @@ final class TCPServer {
         connection = newConnection
         receiveBuffer.removeAll(keepingCapacity: false)
         isReceiving = false
-        connectedPlayer = nil
 
         newConnection.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -154,41 +142,9 @@ final class TCPServer {
     }
 
     private func processBufferedMessages(prefix: String) {
-        while let newlineRange = receiveBuffer.firstRange(of: Data([0x0A])) {
-            let messageData = receiveBuffer.subdata(in: 0..<newlineRange.lowerBound)
-            receiveBuffer.removeSubrange(0..<newlineRange.upperBound)
-
-            guard let message = MessageParser.decode(messageData) else {
-                if let text = String(data: messageData, encoding: .utf8), !text.isEmpty {
-                    print("Recebido do cliente (não decodificado): \(text)")
-                }
-                continue
-            }
-
-            switch message.type {
-            case .playerJoined:
-                connectedPlayer = message.player
-                self.onMessageReceived?(message)
-                print("\(prefix): playerJoined \(message.player?.name ?? "?")")
-            case .playerReady:
-                self.onMessageReceived?(message)
-                print("\(prefix): playerReady \(message.player?.name ?? "?")")
-            case .startGame:
-                self.onMessageReceived?(message)
-                print("\(prefix): startGame")
-            case .move:
-                self.onMessageReceived?(message)
-                let origin = message.origin.map { "\($0.row),\($0.column)" } ?? "?"
-                let destination = message.destination.map { "\($0.row),\($0.column)" } ?? "?"
-                print("\(prefix): move \(origin) \(destination)")
-            case .message:
-                self.onMessageReceived?(message)
-                print("\(prefix): message \(message.text ?? "")")
-            case .disconnect:
-                self.onMessageReceived?(message)
-                print("\(prefix): disconnect \(message.player?.name ?? "?")")
-                connectedPlayer = nil
-            }
+        for message in MessageParser.decodeMessages(from: &receiveBuffer) {
+            onMessageReceived?(message)
+            print("\(prefix): \(MessageParser.summary(for: message))")
         }
     }
 
@@ -196,7 +152,15 @@ final class TCPServer {
         isReceiving = false
         receiveBuffer.removeAll(keepingCapacity: false)
         connection = nil
-        connectedPlayer = nil
+    }
+
+    private func close() {
+        isReceiving = false
+        receiveBuffer.removeAll(keepingCapacity: false)
+        connection?.cancel()
+        connection = nil
+        listener?.cancel()
+        listener = nil
     }
 
     private func send(_ message: NetworkMessage, completion: (() -> Void)? = nil) {

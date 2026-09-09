@@ -1,12 +1,3 @@
-//
-//  LobbyRepository.swift
-//  SocketProject
-//
-//  Created by OpenAI.
-//
-
-import Foundation
-
 final class LobbyRepository {
     var onServerStateChange: ((String) -> Void)?
     var onClientStateChange: ((String) -> Void)?

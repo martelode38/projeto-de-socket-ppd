@@ -1,10 +1,3 @@
-//
-//  GameView.swift
-//  SocketProject
-//
-//  Created by OpenAI.
-//
-
 import SwiftUI
 
 struct GameView: View {
@@ -12,24 +5,39 @@ struct GameView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Fanorona")
-                            .font(.title)
-                        Text("Tela do jogo")
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Fanorona")
+                                .font(.title)
+                            Text(viewModel.roleText)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        HStack {
+                            Button("Desistir") {
+                                viewModel.resignMatch()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.gameState != .playing)
+
+                            Button("Sair") {
+                                viewModel.disconnectFromGame()
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
 
-                    Spacer()
-
-                    Button("Desconectar") {
-                        viewModel.disconnectFromGame()
+                    Text("Turno: \(viewModel.currentTurn == .white ? "Brancas" : "Pretas")")
+                    Text(viewModel.boardStatus)
+                    if !viewModel.winnerText.isEmpty {
+                        Text(viewModel.winnerText)
+                            .font(.headline)
                     }
                 }
-
-                Text("Estado: \(viewModel.gameState.rawValue)")
-                Text("Turno: \(viewModel.currentTurn == .white ? "Brancas" : "Pretas")")
-                Text("Status: \(viewModel.boardStatus)")
 
                 FanoronaBoardView(
                     board: viewModel.board,
@@ -38,36 +46,12 @@ struct GameView: View {
                 )
                 .frame(minHeight: 360)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Chat")
-                        .font(.headline)
-
-                    Text("Jogador conectado: \(viewModel.connectedPlayerName)")
-
-                    TextField("Mensagem", text: $viewModel.message)
-                        .textFieldStyle(.roundedBorder)
-
-                    HStack {
-                        Button("Enviar como cliente") {
-                            viewModel.sendAsClient()
-                        }
-                        .disabled(viewModel.isSendingMessage || !viewModel.isClientConnected || viewModel.message.isEmpty)
-
-                        Button("Enviar como host") {
-                            viewModel.sendAsServer()
-                        }
-                        .disabled(!viewModel.isServerRunning || viewModel.message.isEmpty)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Log")
-                        .font(.headline)
-
-                    ForEach(viewModel.logs.indices, id: \.self) { index in
-                        Text(viewModel.logs[index])
-                    }
-                }
+                ChatView(
+                    messages: viewModel.chatMessages,
+                    text: $viewModel.message,
+                    canSend: viewModel.canSendChatMessage,
+                    onSend: viewModel.sendChatMessage
+                )
             }
             .padding()
         }
